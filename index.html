@@ -1,1 +1,257 @@
 
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My 3D Football</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#101820;color:white;font-family:Arial,sans-serif;overflow:hidden}
+#hud{position:fixed;z-index:2;top:14px;left:50%;transform:translateX(-50%);text-align:center;background:#101820dd;padding:12px 24px;border:1px solid #ffffff33;border-radius:14px;min-width:230px}
+#score{font-size:30px;font-weight:bold}
+#status{font-size:13px;color:#b8e9c2;margin-top:4px}
+#help{position:fixed;bottom:14px;left:14px;background:#101820dd;padding:12px 16px;border-radius:12px;font-size:13px;line-height:1.8}
+#help b{color:#a9e9a9}
+#error{position:fixed;inset:0;display:none;place-items:center;padding:25px;background:#101820;color:white;text-align:center;z-index:5}
+canvas{display:block}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div style="font-size:12px;letter-spacing:3px">MY FOOTBALL CLUB</div>
+  <div id="score">0 - 0</div>
+  <div id="status">WEDSTRIJD KLAAR</div>
+</div>
+<div id="help">
+  <b>WASD / pijltjes</b> — bewegen<br>
+  <b>SHIFT</b> — sprinten<br>
+  <b>SPATIE</b> — schieten<br>
+  <b>E</b> — passen<br>
+  <b>R</b> — bal terugzetten
+</div>
+<div id="error">De 3D-game kon niet laden. Controleer je internetverbinding en of je browser WebGL ondersteunt.</div>
+
+<script type="module">
+import * as THREE from
+'https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js';
+
+try {
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87b9e8);
+scene.fog = new THREE.Fog(0x87b9e8, 100, 220);
+
+const camera = new THREE.PerspectiveCamera(65,innerWidth/innerHeight,0.1,400);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x53704a,2));
+const sun=new THREE.DirectionalLight(0xffffff,2.5);
+sun.position.set(-35,60,25);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+scene.add(sun);
+
+const mat=(color,roughness=0.8)=>new THREE.MeshStandardMaterial({color,roughness});
+const grass=mat(0x278b42),white=mat(0xffffff),dark=mat(0x263747);
+const blue=mat(0x1678f2),red=mat(0xf04444),skin=mat(0xe5b38b);
+const black=mat(0x17202a),ballMat=mat(0xffffff,0.4);
+
+function box(w,h,d,material,x,y,z){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
+ m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;
+ scene.add(m);return m;
+}
+function line(points,material=white){
+ const g=new THREE.BufferGeometry().setFromPoints(points.map(p=>new THREE.Vector3(...p)));
+ const m=new THREE.Line(g,material);scene.add(m);return m;
+}
+
+// Veld en stadion
+box(66,0.5,96,grass,0,-0.3,0);
+for(let i=0;i<10;i++){
+ box(66,0.015,4.8,mat(i%2?0x278b42:0x23803b),0,-0.035,-43+i*9.5);
+}
+const y=0.02;
+line([[-29,y,-43],[29,y,-43],[29,y,43],[-29,y,43],[-29,y,-43]]);
+line([[-29,y,0],[29,y,0]]);
+const circlePts=[];
+for(let i=0;i<=80;i++){const a=i/80*Math.PI*2;circlePts.push([9*Math.cos(a),y,9*Math.sin(a)]);}
+line(circlePts);
+for(const z of [-43,43]){
+ line([[-10,y,z],[-10,y,z+(z<0?11:-11)],[10,y,z+(z<0?11:-11)],[10,y,z]]);
+ line([[-18,y,z],[-18,y,z+(z<0?5:-5)],[18,y,z+(z<0?5:-5)],[18,y,z]]);
+}
+// Doelen
+for(const z of [-46,46]){
+ const dir=z<0?-1:1;
+ box(0.25,3.2,0.25,white,-10,1.6,z);
+ box(0.25,3.2,0.25,white,10,1.6,z);
+ box(20,0.25,0.25,white,0,3.2,z);
+ for(let x=-9;x<=9;x+=3)line([[x,0.1,z],[x,3,z+dir*2]],white);
+ line([[-10,3,z],[10,3,z],[10,0.1,z+dir*2],[-10,0.1,z+dir*2],[-10,3,z]],white);
+}
+// Eenvoudige tribunes
+for(const z of [-58,58]){
+ for(let row=0;row<4;row++){
+  box(78,1.6,3,mat(row%2?0x435468:0x344454),0,2+row*1.6,z+(z<0?-row*2:row*2));
+ }
+ for(let x=-34;x<=34;x+=3){
+  box(1,0.7,1.2,mat([0xe44b4b,0xf2f2f2,0x2877db][Math.abs(x/3)%3|0]),x,2.3,z);
+ }
+}
+box(85,1,130,dark,0,-1.2,0);
+
+// Speler maken
+function makePlayer(teamColor,x,z,isUser=false){
+ const root=new THREE.Group();scene.add(root);root.position.set(x,0,z);
+ const jersey=mat(teamColor);
+ const body=new THREE.Mesh(new THREE.CapsuleGeometry(0.65,0.9,4,8),jersey);
+ body.position.y=1.65;body.castShadow=true;root.add(body);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(0.38,16,12),skin);
+ head.position.y=2.75;head.castShadow=true;root.add(head);
+ const hair=new THREE.Mesh(new THREE.SphereGeometry(0.39,12,8),black);
+ hair.scale.set(1,0.45,1);hair.position.y=2.98;root.add(hair);
+ for(const side of [-1,1]){
+  const leg=new THREE.Mesh(new THREE.CapsuleGeometry(0.18,0.65,3,6),black);
+  leg.position.set(side*0.28,0.55,0);root.add(leg);
+  const shoe=new THREE.Mesh(new THREE.BoxGeometry(0.35,0.18,0.55),white);
+  shoe.position.set(side*0.28,0.13,-0.13);root.add(shoe);
+ }
+ if(isUser){
+  const marker=new THREE.Mesh(new THREE.ConeGeometry(0.32,0.55,3),mat(0xffe65b));
+  marker.position.y=3.55;marker.rotation.x=Math.PI;root.add(marker);
+ }
+ return root;
+}
+const player=makePlayer(0x1678f2,0,25,true);
+const teammates=[
+ makePlayer(0x1678f2,-12,12),makePlayer(0x1678f2,12,12),
+ makePlayer(0x1678f2,-20,0),makePlayer(0x1678f2,20,0)
+];
+const opponents=[
+ makePlayer(0xf04444,-7,-9),makePlayer(0xf04444,7,-9),
+ makePlayer(0xf04444,0,-20)
+];
+
+// Bal
+const ball=new THREE.Mesh(new THREE.SphereGeometry(0.48,24,18),ballMat);
+ball.position.set(0,0.48,20);ball.castShadow=true;scene.add(ball);
+const seams=mat(0x222222);
+for(let i=0;i<3;i++){
+ const ring=new THREE.Mesh(new THREE.TorusGeometry(0.32,0.025,5,24),seams);
+ ring.rotation.set(i*0.8,i*1.2,0.4);ball.add(ring);
+}
+const ballVel=new THREE.Vector3();
+let facing=new THREE.Vector3(0,0,-1);
+let blueScore=0,redScore=0;
+const keys={};
+addEventListener('keydown',e=>{
+ keys[e.key.toLowerCase()]=true;
+ if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase()))e.preventDefault();
+ if(e.repeat)return;
+ if(e.code==='Space')kick(18);
+ if(e.key.toLowerCase()==='e')kick(8);
+ if(e.key.toLowerCase()==='r'){ball.position.set(player.position.x,0.48,player.position.z-2);ballVel.set(0,0,0);}
+});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+function kick(power){
+ const dx=ball.position.x-player.position.x;
+ const dz=ball.position.z-player.position.z;
+ if(Math.hypot(dx,dz)>4.2)return;
+ const dir=facing.clone();
+ if(keys['a']||keys['arrowleft'])dir.x-=0.4;
+ if(keys['d']||keys['arrowright'])dir.x+=0.4;
+ dir.normalize();
+ ballVel.set(dir.x*power, power===18?5:1.2, dir.z*power);
+ document.getElementById('status').textContent=power===18?'SCHOT!':'PASS!';
+}
+function resetBall(){
+ ball.position.set(0,0.48,0);ballVel.set(0,0,0);
+ player.position.set(0,0,25);facing.set(0,0,-1);
+}
+function score(team){
+ if(team==='blue')blueScore++;else redScore++;
+ document.getElementById('score').textContent=blueScore+' - '+redScore;
+ document.getElementById('status').textContent=team==='blue'?'GOOOAL! JOUW TEAM SCOORT!':'GOAL VAN DE TEGENSTANDER!';
+ resetBall();
+}
+const clock=new THREE.Clock();
+function animate(){
+ requestAnimationFrame(animate);
+ const dt=Math.min(clock.getDelta(),0.04);
+ const move=new THREE.Vector3(
+  (keys['d']||keys['arrowright']?1:0)-(keys['a']||keys['arrowleft']?1:0),
+  0,
+  (keys['s']||keys['arrowdown']?1:0)-(keys['w']||keys['arrowup']?1:0)
+ );
+ if(move.lengthSq()>0){
+  move.normalize();facing.copy(move).negate();
+  player.position.addScaledVector(move,(keys['shift']?13:8)*dt);
+  player.position.x=THREE.MathUtils.clamp(player.position.x,-27,27);
+  player.position.z=THREE.MathUtils.clamp(player.position.z,-41,41);
+  player.rotation.y=Math.atan2(facing.x,facing.z);
+ }
+ // Bal rolt en botst tegen het veld
+ ball.position.addScaledVector(ballVel,dt);
+ ballVel.multiplyScalar(Math.pow(0.985,dt*60));
+ ball.position.y=Math.max(0.48,ball.position.y+ballVel.y*dt);
+ ballVel.y-=16*dt;
+ if(ball.position.y<=0.48){ball.position.y=0.48;ballVel.y=Math.abs(ballVel.y)*0.42;if(ballVel.y<0.8)ballVel.y=0;}
+ ball.rotation.x+=ballVel.z*dt;ball.rotation.z-=ballVel.x*dt;
+ if(Math.abs(ball.position.x)>29){ball.position.x=Math.sign(ball.position.x)*29;ballVel.x*=-0.55;}
+ // Doelpunten
+ if(Math.abs(ball.position.x)<10 && ball.position.y<3.3 && ball.position.z < -46)score('blue');
+ else if(Math.abs(ball.position.x)<10 && ball.position.y<3.3 && ball.position.z > 46)score('red');
+ else if(Math.abs(ball.position.z)>49){ball.position.z=Math.sign(ball.position.z)*49;ballVel.z*=-0.5;}
+ // Teamgenoten bewegen richting aanvallende posities
+ teammates.forEach((p,i)=>{
+  const tx=player.position.x+(i%2===0?-1:1)*(8+i*2);
+  const tz=player.position.z-8-(i%2)*7;
+  p.position.x+=(THREE.MathUtils.clamp(tx,-25,25)-p.position.x)*dt*0.5;
+  p.position.z+=(THREE.MathUtils.clamp(tz,-38,38)-p.position.z)*dt*0.5;
+ });
+ // Simpele tegenstanders jagen op de bal
+ opponents.forEach((p,i)=>{
+  const target=i===0||i===1?ball.position:new THREE.Vector3(0,0,-26);
+  const d=new THREE.Vector3(target.x-p.position.x,0,target.z-p.position.z);
+  if(d.length()>0.1){
+   d.normalize();p.position.addScaledVector(d,dt*(i===2?2.5:3.2));
+   p.position.x=THREE.MathUtils.clamp(p.position.x,-26,26);
+   p.position.z=THREE.MathUtils.clamp(p.position.z,-40,40);
+  }
+  if(p.position.distanceTo(new THREE.Vector3(ball.position.x,0,ball.position.z))<1.4){
+   ballVel.x+=(ball.position.x-p.position.x)*dt*2;
+   ballVel.z+=2.5*dt;
+  }
+ });
+ // Bal blijft bij speler als je er dicht bij loopt
+ const dist=Math.hypot(ball.position.x-player.position.x,ball.position.z-player.position.z);
+ if(dist<1.35 && ball.position.y<1.4 && ballVel.length()<9){
+  ballVel.x+=(player.position.x-ball.position.x)*dt*9;
+  ballVel.z+=(player.position.z-ball.position.z)*dt*9;
+ }
+ // Camera achter de speler
+ const desired=new THREE.Vector3(player.position.x,player.position.y+9,player.position.z+13);
+ camera.position.lerp(desired,1-Math.exp(-3*dt));
+ camera.lookAt(player.position.x,1,player.position.z-7);
+ renderer.render(scene,camera);
+}
+addEventListener('resize',()=>{
+ camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
+animate();
+} catch(e) {
+ document.getElementById('error').style.display='grid';
+ console.error(e);
+}
+</script>
+</body>
+</html>
